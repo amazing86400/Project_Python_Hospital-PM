@@ -1,0 +1,204 @@
+# 카카오 API를 활용한 시각화 및 부산 진료 데이터 전처리
+
+
+
+### 서울 데이터를 예시로 전처리 실행
+
+```python
+import pandas as pd
+import numpy as np
+
+data = pd.read_csv('./data/fulldata_01_병원.csv', encoding = 'cp949')
+data.head()
+```
+
+​	병원 위치 데이터를 불러온다.
+
+
+
+```python
+var_list = ['영업상태명','도로명전체주소','사업장명','좌표정보(x)','좌표정보(y)','의료기관종별명','진료과목내용','진료과목내용명'
+]
+data2 = data[var_list]
+data2.head()
+```
+
+​	내게 필요한 컬럼만 추출한다.
+
+
+
+```python
+condition = data2['영업상태명'].str.contains('영업', na = False)
+data_nor = data2[condition]
+data_nor.head()
+
+# condition = data2['영업상태명'] == '영업/정상'
+# data_nor = data2[condition]
+# data_nor.head()
+```
+
+​	영업상태가 현재 영업인 것만 추출한다. 이번에는 contains() 함수를 사용했다. value 중 특정 문자가 있으면 True로 반환한다.
+
+
+
+```python
+condition2 = data_nor['도로명전체주소'].str.contains('서울특별시', na = False)
+data_seoul = data_nor[condition2]
+data_seoul.head()
+
+# condition2 = data_nor['도로명전체주소'].str.split(' ').str[0] == '서울특별시'
+# data_seoul = data_nor[condition2]
+# data_seoul.head()
+```
+
+​	서울만 추출하기 위해 주소에 조건을 '서울특별시'로 설정한다.
+
+
+
+---
+
+
+
+### 카카오 API 활용
+
+```python
+data_seoul['주소'] = data_seoul['도로명전체주소'].str.split('(').str[0]
+data_seoul['주소'] = data_seoul['주소'].str.split(',').str[0]
+data_seoul.to_excel('./data/hos_seoul.xlsx', index = False)
+```
+
+​	사업장명으로 api를 활용하면 중복되는 값들이 있어, 도로명을 사용하겠다. '주소'라는 새 컬럼을 만들었다. 그리고 주소에 '~건물 ~층' 같은 필요 없는 데이터가 있어 제거하는 작업을 했다.
+
+
+
+```python
+import requests
+
+def find_places(searching):
+    url = 'https://dapi.kakao.com/v2/local/search/keyword.json?query={}'.format(searching)
+    headers = {
+        "Authorization" : "**"
+    }
+    places = requests.get(url, headers = headers).json()['documents']
+    place = places[0]
+    name = place['place_name']
+    x = place['x']
+    y = place['y']
+    result = [name, x, y, searching]
+    
+    return(result)
+```
+
+​	카카오 api는 requests 라이브러리를 사용할 것이다. 그리고 데이터프레임의 주소 컬럼을 활용해 위도와 경도 정보를 얻기 위한 함수를 정의한다. url과 headers는 홈페이지에서 제공하는 url과 자신의 key를 입력하면 된다.(개인 정보이니 key는 주의하도록!)
+
+
+
+```python
+from tqdm.notebook import tqdm
+import time
+
+location = []
+for i in tqdm(data_seoul['주소']):
+    try:
+        temp = find_places(i)
+        location.append(temp)
+        time.sleep(1)
+    except:
+        pass
+    
+location_df = pd.DataFrame(location, columns = ['name_official', '경도', '위도', '주소'])
+
+location_df.to_excel('./data/hos_location.xlsx', index=False)
+```
+
+​	이제 for문을 돌려 위도와 경도 데이터를 수집한다. 이때 tqdm을 활용하면 얼마나 진행되고 있는지를 확인할 수 있다. 그러고 나서 데이터프레임으로 변환 후 파일을 저장한다.
+
+
+
+---
+
+
+
+### folium 시각화
+
+```python
+import folium
+
+tiles = ['stamenwatercolor', 'cartodbpositron', 
+         'openstreetmap', 'stamenterrain']
+
+hos_map = folium.Map(location = [37.573050, 126.979189],
+                    tiles = 'StamenTerrain',
+                    zoom_start = 11)
+
+for idx in location.index:
+    
+    lat = location.loc[idx, '위도']
+    lng = location.loc[idx, '경도']
+    names = location.loc[idx, 'name_official']
+    address = '<pre>'+ location.loc[idx, '주소'] +'</pre>'
+    
+    folium.CircleMarker(
+    location = [lat, lng],
+    popup = address,
+    tooltip = names,
+    radius = 4,
+    weight = 1,
+    fill_color = 'blue',
+    fill_opacity = 0.5).add_to(hos_map)
+    
+hos_map
+```
+
+​	folium 라이브러리를 통해 지도 시각화를 수행한다. 주소의 경우 '<pre>' '</pre>'를 함께 입력해야 popup에 사용 가능하다. tooltip은 마우스를 올려 놓았을 때 나오는 위치명이며, radius는 원의 크기다. 그리고 opacity는 투명도를 의미한다.
+
+
+
+---
+
+
+
+### 부산 지역 전처리
+
+```python
+import pandas as pd
+import numpy as np
+
+df1 = pd.read_csv('./data/T20_2019_1백만.1.csv', encoding = 'cp949')
+
+var_list = ['성별코드', '연령대코드', '시도코드', '진료과목코드', '주상병코드']
+df_1 = df1[var_list]
+
+condition = df_1['시도코드'] == 26
+data_1 = df_1[condition]
+```
+
+​	지금까지 서울 데이터로 했던 과정을 이제 부산으로 설정해 수행할 것이다. 우선 부산의 진료내역 데이터를 활용해 연령별 환자 비율을 알아보겠다.
+
+​	위 코드는 데이터를 불러와 시도 코드 중 부산(26)인 것만을 추출하는 코드이다. 총 6개의 파일이 있는데, 위와 같은 방법으로 모든 파일을 전처리한다.
+
+
+
+```python
+data = pd.concat([data_1, data_2, data_3, data_4, data_5, data_6], ignore_index=True)
+data.head()
+```
+
+​	concat() 함수를 활용해 데이터를 합친다.
+
+
+
+```python
+data['연령대코드'].value_counts(normalize = True)
+```
+
+​	value_counts()를 활용해 환자의 비율을 알아본 결과 
+
+- 1등 60~64세(13)
+- 2등 65~69세(14)
+- 3등 70~74세(15)
+- 4등 55~59세(12)
+- 5등 75~79세(16)
+- 꼴등 15~19세(4)
+
+​	이러한 결과가 나왔다. 1등과 꼴등은 무려 10%나 차이가 난다.
